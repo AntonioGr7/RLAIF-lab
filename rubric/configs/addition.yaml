@@ -1,0 +1,40 @@
+# Addition demo — the sanity-check experiment. Reproduces train.py's defaults.
+# Keys map 1:1 to train.py flags (underscores instead of dashes).
+#   python train.py --config configs/addition.yaml
+# Any CLI flag still overrides a value here, e.g. `... --max-steps 200`.
+
+# Model / data
+model: Qwen/Qwen2.5-1.5B-Instruct
+train_jsonl: example_data/addition_train.jsonl
+output_dir: outputs/addition-grpo
+
+# GRPO core
+num_generations: 8          # group size G
+per_device_batch: 16        # per_device_batch * grad_accum must be divisible by G
+grad_accum: 4
+learning_rate: 1.0e-5
+beta: 0.0                   # KL coef; 0 = off (fine for this narrow task)
+temperature: 1.0
+max_prompt_length: 256
+max_completion_length: 32   # answers are a single integer
+max_steps: 120
+
+# LoRA
+lora_rank: 32
+lora_alpha: 64
+
+# vLLM generation (colocated on the same A100)
+vllm_gpu_mem: 0.3
+
+# Logging
+logging_steps: 1
+save_steps: 40
+wandb_project: null
+
+# Grader endpoint. Omit this block to configure the grader purely via env
+# (GRADER_BASE_URL / GRADER_MODEL / ...). Values here override the env.
+grader:
+  # base_url: http://localhost:8001/v1
+  model: Qwen/Qwen2.5-7B-Instruct
+  temperature: 0.0
+  max_concurrency: 64

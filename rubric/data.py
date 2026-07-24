@@ -74,22 +74,24 @@ class Rubric:
             ]
         )
 
-    def extract_score(self, grader_reply: str) -> float:
+    def extract_score(self, grader_reply: str) -> float | None:
         """Pull the score out of the grader reply and normalize to [0, 1].
 
-        A missing/unparseable score is treated as 0.0 — a grader that ignores the
-        format instruction should not be rewarded.
+        Returns ``None`` when no numeric score could be found — the caller decides
+        what that means. This is deliberately distinct from a real ``0.0`` score:
+        "the grader said 0" and "the grader ignored the format" are different
+        events, and only the caller can see how often the latter happens.
         """
         m = re.search(self.extraction_regex, grader_reply, re.DOTALL)
         if not m:
-            return 0.0
+            return None
         try:
             raw = float(m.group(1).strip())
         except ValueError:
-            return 0.0
+            return None
         span = self.max_score - self.min_score
         if span <= 0:
-            return 0.0
+            return None
         return max(0.0, min(1.0, (raw - self.min_score) / span))
 
     def to_dict(self) -> dict:
@@ -144,7 +146,7 @@ def load_jsonl(path: str | Path) -> list[RubricDatapoint]:
     if not path.exists():
         raise FileNotFoundError(
             f"{path} not found. Generate it first:\n"
-            f"  uv run python generate_data.py"
+            f"  python tasks/addition.py"
         )
     with open(path) as f:
         return [RubricDatapoint.from_json(line) for line in f if line.strip()]

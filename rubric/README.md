@@ -34,11 +34,12 @@ the A100 is spent on the policy, not the grader.
 | File | Role |
 |------|------|
 | [data.py](data.py) | `Rubric` + `RubricDatapoint`: criterion text, grader output-format instruction, score-extraction regex, jsonl I/O |
-| [generate_data.py](generate_data.py) | Builds the **addition** demo dataset (`a + b`) |
+| [tasks/](tasks/) | One dataset generator per task; [tasks/addition.py](tasks/addition.py) builds the **addition** demo (`a + b`) |
 | [grader.py](grader.py) | Async, batched rubric grader over any OpenAI-compatible endpoint |
 | [reward.py](reward.py) | Wraps the grader as a TRL GRPO reward function |
 | [train.py](train.py) | GRPO + LoRA + colocated vLLM training loop |
 | [eval.py](eval.py) | Before/after mean rubric score + sample completions |
+| [configs/](configs/) | Per-experiment YAML (`--config`); keys map 1:1 to `train.py` flags, plus a `grader:` block |
 
 ## The concrete example: addition
 
@@ -69,7 +70,7 @@ uv pip install --system -e '.[train]'
 # uv sync --extra train      # then prefix the commands below with `uv run`
 
 # 1) data
-python generate_data.py                  # -> example_data/addition_{train,test}.jsonl
+python tasks/addition.py                 # -> example_data/addition_{train,test}.jsonl
 
 # 2) grader endpoint (a second GPU/host, or CPU for a tiny model)
 vllm serve Qwen/Qwen2.5-7B-Instruct --port 8001 &
@@ -80,8 +81,9 @@ export GRADER_API_KEY=EMPTY
 # 3) baseline behavior
 python eval.py                            # base model, mean rubric score
 
-# 4) train
-python train.py --max-steps 120           # watch `reward` climb in the logs
+# 4) train (config-driven; CLI flags still override individual values)
+python train.py --config configs/addition.yaml
+# e.g. override on the fly:  python train.py --config configs/addition.yaml --max-steps 200
 
 # 5) trained behavior
 python eval.py --adapter outputs/rubric-grpo
@@ -101,6 +103,13 @@ See [.env.example](.env.example) for grader configuration.
 
 ## Notes & knobs
 
+- **Experiment configs.** Put one YAML per experiment in [configs/](configs/) and
+  launch with `--config`. Precedence is **CLI flag > config file > code default**,
+  so you can pin an experiment in YAML and still tweak one value from the command
+  line. Keys map 1:1 to `train.py` flags (underscores); a `grader:` block
+  configures the grader endpoint and overrides the env vars.
+  [configs/realistic_template.yaml](configs/realistic_template.yaml) is a starting
+  point for a real task (KL on, longer completions, stronger grader).
 - **Single-GPU memory.** vLLM runs *colocated* (`vllm_mode="colocate"`) and is
   capped at `--vllm-gpu-mem 0.3` of VRAM; the rest is for LoRA training. Drop the
   fraction if you hit OOM, or move generation to a second GPU.
@@ -112,5 +121,5 @@ See [.env.example](.env.example) for grader configuration.
   it's a good *demo*. On real tasks the rubric moves subjectivity from "is this
   good?" to "are these the right criteria?" — smaller, but not zero. Audit grader
   rationales and watch for reward hacking.
-- **Harder/easier.** `generate_data.py --max-operand 999` reproduces the
+- **Harder/easier.** `tasks/addition.py --max-operand 999` reproduces the
   reference's easy setting; raise it for more headroom.

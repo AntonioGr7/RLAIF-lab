@@ -6,7 +6,7 @@ mean rubric score, RL update), but runs locally on open weights via TRL + vLLM.
 
 Prereqs:
   1. uv sync --extra train           # installs trl, vllm, peft, ...
-  2. uv run python generate_data.py  # writes example_data/addition_{train,test}.jsonl
+  2. python tasks/addition.py        # writes example_data/addition_{train,test}.jsonl
   3. Stand up a grader endpoint (any OpenAI-compatible server), e.g. on another
      GPU/host:  vllm serve Qwen/Qwen2.5-7B-Instruct --port 8001
      then:      export GRADER_BASE_URL=http://localhost:8001/v1
@@ -24,6 +24,7 @@ from __future__ import annotations
 import argparse
 import json
 
+import yaml
 from datasets import Dataset
 
 from data import load_jsonl
@@ -41,8 +42,13 @@ def build_dataset(jsonl_path: str) -> Dataset:
     return Dataset.from_dict(rows)
 
 
-def main() -> None:
+def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser()
+    ap.add_argument(
+        "--config",
+        default=None,
+        help="path to a YAML experiment config (see configs/). CLI flags override it.",
+    )
     # Model / data
     ap.add_argument("--model", default="Qwen/Qwen2.5-1.5B-Instruct")
     ap.add_argument("--train-jsonl", default="example_data/addition_train.jsonl")
@@ -66,7 +72,42 @@ def main() -> None:
     ap.add_argument("--logging-steps", type=int, default=1)
     ap.add_argument("--save-steps", type=int, default=40)
     ap.add_argument("--wandb-project", default=None)
-    args = ap.parse_args()
+    return ap
+
+
+def _load_config(path: str) -> dict:
+    with open(path) as f:
+        cfg = yaml.safe_load(f) or {}
+    if not isinstance(cfg, dict):
+        raise SystemExit(f"{path}: top-level YAML must be a mapping of keys.")
+    return cfg
+
+
+def main() -> None:
+    # Pre-parse just --config so its values can seed argparse defaults. Precedence
+    # ends up: CLI flag > config file > code default.
+    pre = argparse.ArgumentParser(add_help=False)
+    pre.add_argument("--config", default=None)
+    pre_args, _ = pre.parse_known_args()
+
+    cfg: dict = {}
+    grader_overrides: dict = {}
+    if pre_args.config:
+        cfg = _load_config(pre_args.config)
+        grader_overrides = cfg.pop("grader", {}) or {}  # handled separately below
+
+    ap = build_parser()
+    known = {a.dest for a in ap._actions}
+    unknown = set(cfg) - known
+    if unknown:
+        raise SystemExit(
+            f"unknown keys in {pre_args.config}: {sorted(unknown)}\n"
+            f"valid keys: {sorted(known - {'help', 'config'})}"
+        )
+    ap.set_defaults(**cfg)  # config overrides code defaults
+    args = ap.parse_args()  # CLI overrides config
+    if pre_args.config:
+        print(f"[config] loaded {pre_args.config}")
 
     # Fail fast on the divisibility rule TRL enforces internally, with a clear msg.
     effective = args.per_device_batch * args.grad_accum
@@ -78,12 +119,22 @@ def main() -> None:
             f"prompts/step would be uneven."
         )
 
-    # Imported here so `generate_data.py` etc. don't need the heavy train stack.
+    # Imported here so data generators / the grader don't need the heavy train stack.
     from peft import LoraConfig
     from trl import GRPOConfig, GRPOTrainer
 
+    # Grader config: start from env, then apply any `grader:` block from the YAML.
+    grader_cfg = GraderConfig.from_env()
+    for k, v in grader_overrides.items():
+        if not hasattr(grader_cfg, k):
+            raise SystemExit(
+                f"unknown grader config key {k!r}; "
+                f"valid: {sorted(vars(grader_cfg))}"
+            )
+        setattr(grader_cfg, k, v)
+
     train_ds = build_dataset(args.train_jsonl)
-    reward_fn = make_rubric_reward(GraderConfig.from_env())
+    reward_fn = make_rubric_reward(grader_cfg)
 
     grpo_config = GRPOConfig(
         output_dir=args.output_dir,

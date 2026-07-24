@@ -1,4 +1,8 @@
-"""Generate the addition demo dataset.
+"""Task: addition. Generates the `a + b` demo dataset.
+
+One file per task lives in this folder; each builds a jsonl of RubricDatapoints
+that train.py / eval.py consume. To add a task, copy this file, change the
+`convo` and `rubric_items`, and write to a new jsonl.
 
 The task, straight from the reference recipe: the policy is asked `What is a + b?`
 and must answer with the number. We *could* check the answer with `==`, but the
@@ -9,16 +13,21 @@ We use larger operands than the reference (default up to 5 digits) so a small
 local policy is wrong often enough at step 0 to leave a clearly visible learning
 curve. Tune `--max-operand` down for an easier task, up for a harder one.
 
-    uv run python generate_data.py                 # defaults: 4000 train / 400 test
-    uv run python generate_data.py --max-operand 999   # easy mode (like the ref)
+    python tasks/addition.py                       # 4000 train / 400 test
+    python tasks/addition.py --max-operand 999     # easy mode (like the ref)
 """
 
 from __future__ import annotations
 
 import argparse
 import random
+import sys
+from pathlib import Path
 
-from data import Rubric, RubricDatapoint, save_jsonl
+# Make the recipe root importable when run as `python tasks/addition.py`.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from data import Rubric, RubricDatapoint, save_jsonl  # noqa: E402
 
 SYSTEM = "You are a calculator. Reply with only the final integer, nothing else."
 

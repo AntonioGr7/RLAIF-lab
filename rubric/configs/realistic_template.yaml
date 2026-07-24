@@ -1,0 +1,52 @@
+# Template for a realistic rubric task (not the toy addition one). Copy this,
+# point it at your own generated dataset, and tune the flagged knobs.
+#
+#   1. Write a new tasks/<name>.py producing multi-criterion rubrics.
+#   2. Validate the grader against human labels BEFORE trusting it as reward.
+#   3. python train.py --config configs/my_experiment.yaml
+#
+# The differences from addition.yaml are the knobs that matter once an LLM
+# grader (not a near-perfect one) is the reward source.
+
+model: Qwen/Qwen2.5-7B-Instruct        # a stronger policy for open-ended tasks
+train_jsonl: example_data/my_task_train.jsonl
+output_dir: outputs/my-task-grpo
+
+num_generations: 8
+per_device_batch: 8
+grad_accum: 8
+learning_rate: 1.0e-6                   # lower LR for a larger model / softer signal
+
+# KL leash: > 0 for real tasks so the policy can't drift far from the base model
+# to chase grader artifacts. Watch the `kl` metric — if it climbs while reward
+# climbs, you are likely reward-hacking; raise beta.
+beta: 0.02
+
+temperature: 1.0
+max_prompt_length: 1024                 # real prompts are longer than "a + b"
+max_completion_length: 512              # allow real answers; watch length inflation
+max_steps: 500
+
+lora_rank: 32
+lora_alpha: 64
+vllm_gpu_mem: 0.4
+
+logging_steps: 1
+save_steps: 50
+wandb_project: rubric-rlaif             # track reward/kl/length curves
+
+grader:
+  # Use a STRONG grader — it is your reward function. Validate its agreement
+  # with human labels on a held-out sample first.
+  model: Qwen/Qwen2.5-72B-Instruct
+  temperature: 0.0
+  max_tokens: 1024                      # room for rubric reasoning before the score
+  max_concurrency: 32
+  on_error: raise                       # abort on grader outage, don't feed 0s
+  max_retries: 6
+  # For a hosted OpenAI teacher instead:
+  #   base_url: null                    # hit api.openai.com (set GRADER_API_KEY in env)
+  #   model: gpt-4o-mini
+  #   max_concurrency: 8                # avoid rate limits
+  # For an OpenAI o-series/reasoning teacher, also set:
+  #   reasoning: true
