@@ -26,6 +26,19 @@ from data import load_jsonl
 from grader import GraderConfig, RubricGrader
 
 
+_ABSTAIN_CUES = (
+    "cannot find", "can't find", "cannot answer", "can't answer", "could not find",
+    "not in the context", "not contain", "doesn't contain", "does not contain",
+    "no answer", "don't know", "do not know", "unable to", "not provided",
+    "not mentioned", "not available", "not stated", "not specified", "isn't in",
+)
+
+
+def _abstained(text: str) -> bool:
+    t = text.lower()
+    return any(c in t for c in _ABSTAIN_CUES)
+
+
 def generate(model, tok, convo, max_new_tokens: int) -> str:
     # return_dict=True -> {input_ids, attention_mask}; newer transformers no longer
     # returns a bare tensor here, so pass the dict through with **inputs.
@@ -97,6 +110,28 @@ def main() -> None:
         print(f"  score={sc:.2f}  Q: {q!r}  ->  A: {ans!r}")
     print("=" * 70)
     print(f"{tag}: mean rubric score over {len(scores)} examples = {mean:.3f}")
+
+    # Independent metric (no LLM grader): for tasks that tag datapoints with
+    # `answerable` in meta (RAG groundedness), report answer/abstention accuracy
+    # mechanically. This is the Goodhart check — a model that hacks the reward by
+    # ALWAYS abstaining shows high unanswerable-abstention but low answerable-acc.
+    if dps and dps[0].meta.get("answerable") is not None:
+        ans = [(dp, a) for dp, a in zip(dps, completions) if dp.meta.get("answerable")]
+        unans = [(dp, a) for dp, a in zip(dps, completions) if not dp.meta.get("answerable")]
+
+        def frac(pairs, pred):
+            return sum(pred(dp, a) for dp, a in pairs) / len(pairs) if pairs else 0.0
+
+        def answered_correct(dp, a):
+            gold = (dp.meta.get("gold") or "").strip().lower()
+            return gold != "" and gold in a.lower() and not _abstained(a)
+
+        print("-" * 70)
+        print("independent check (no grader):")
+        print(f"  answerable   (n={len(ans)}):   correct answer   = {frac(ans, answered_correct):.3f}")
+        print(f"  answerable   (n={len(ans)}):   wrongly abstained = {frac(ans, lambda d, a: _abstained(a)):.3f}")
+        print(f"  unanswerable (n={len(unans)}): correctly abstained = {frac(unans, lambda d, a: _abstained(a)):.3f}")
+        print("  (reward-hacking tell: high 'unanswerable abstained' + high 'answerable wrongly abstained')")
 
 
 if __name__ == "__main__":

@@ -1,51 +1,53 @@
 # RAG groundedness / faithful abstention experiment.
-#   python tasks/rag_groundedness.py           # build the data first
-#   python train.py --config configs/rag_groundedness.yaml
+#   python tasks/rag_groundedness.py           # build the data first (needs `datasets`)
+#   sed -i 's|^  base_url:.*|  base_url: <YOUR_GRADER_URL>|' configs/rag_groundedness.yaml
+#   python train.py --config configs/rag_groundedness.yaml --no-use-vllm
 #
-# The reward is the mean of two reference-free rubric criteria: (1) grounded —
-# no claim beyond the passage; (2) appropriate — answers when answerable, abstains
-# when not. Watch that reward rises WITHOUT the model collapsing to always-abstain
-# (that's why the data is 50/50; see tasks/rag_groundedness.py).
+# Reward = mean of two reference-free rubric criteria: (1) grounded — no claim
+# beyond the passage; (2) appropriate — answers when answerable, abstains when
+# not. This is a BEHAVIORAL task: the base model is already capable of abstaining,
+# it just doesn't — so RL has real headroom (unlike multiplication, a capability
+# ceiling). Watch reward rise WITHOUT the model collapsing to always-abstain
+# (the 50/50 answerable/unanswerable mix + eval_rag breakdown guard against that).
 
-# Model / data
-model: Qwen/Qwen2.5-7B-Instruct
+# Model / data — 1.5B keeps generation fast on one A100 (bump to 7B if you have
+# room; it follows the grounding instruction better).
+model: Qwen/Qwen2.5-1.5B-Instruct
 train_jsonl: example_data/rag_groundedness_train.jsonl
 output_dir: outputs/rag-groundedness-grpo
 
 # GRPO core
 num_generations: 8
 per_device_batch: 8
-grad_accum: 8
-learning_rate: 1.0e-6
+grad_accum: 8                  # effective 64 -> 8 prompts/step
+learning_rate: 1.0e-6          # gentle; behavioral shift, not a big capability move
 beta: 0.02                     # KL leash ON — groundedness rewards are gameable
 temperature: 1.0
-max_prompt_length: 1024        # passages are long
-max_completion_length: 256     # room for a real answer or an abstention
-max_steps: 500
+max_completion_length: 200     # room for a real answer or an abstention
+max_steps: 200
+# NOTE: no max_prompt_length — TRL 1.9 dropped it. SQuAD passages (~150-250 tok)
+# fit Qwen2.5's context, so no truncation control is needed here.
 
 # LoRA
 lora_rank: 32
 lora_alpha: 64
 
-# vLLM (colocated)
-vllm_gpu_mem: 0.4
+# Generation backend
+use_vllm: true                 # false / --no-use-vllm for transformers generation
+vllm_gpu_mem: 0.3
 
 # Logging
 logging_steps: 1
 save_steps: 50
-wandb_project: rubric-rlaif
+wandb_project: null
 
-# Grader (reference-free): it judges groundedness + answer/abstain from the
-# passage alone. The grader IS the reward — validate its agreement with human
-# labels before trusting it. Qwen3-4B fits on the same GPU as training; if you
-# have spare VRAM/GPUs, a stronger grader gives a cleaner reward signal.
+# Grader (reference-free): judges groundedness + answer/abstain from the passage
+# alone. base_url comes from the sed above (kept out of git) or GRADER_* env.
 grader:
-  model: Qwen/Qwen3-4B-Instruct-2507
+  base_url:
+  model: Qwen/Qwen3.5-35B-A3B-GPTQ-Int4
   temperature: 0.0
-  max_tokens: 1024             # room to reason before the <score>
+  max_tokens: 1024
   max_concurrency: 32
   on_error: raise
-  # Hosted OpenAI teacher instead:
-  #   base_url: null           # set GRADER_API_KEY in env
-  #   model: gpt-4o
-  #   max_concurrency: 8
+  enable_thinking: false       # thinking model -> off for short, reliable verdicts
