@@ -81,12 +81,16 @@ class Rubric:
         what that means. This is deliberately distinct from a real ``0.0`` score:
         "the grader said 0" and "the grader ignored the format" are different
         events, and only the caller can see how often the latter happens.
+
+        We take the LAST match, not the first: graders often reason out loud and
+        echo the format instruction (which itself contains ``<score>...</score>``)
+        before stating the final verdict. The verdict is the last score tag.
         """
-        m = re.search(self.extraction_regex, grader_reply, re.DOTALL)
-        if not m:
+        matches = re.findall(self.extraction_regex, grader_reply, re.DOTALL)
+        if not matches:
             return None
         try:
-            raw = float(m.group(1).strip())
+            raw = float(matches[-1].strip())
         except ValueError:
             return None
         span = self.max_score - self.min_score
