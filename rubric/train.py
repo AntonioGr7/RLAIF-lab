@@ -179,7 +179,6 @@ def main() -> None:
         # sampling / groups
         num_generations=args.num_generations,
         temperature=args.temperature,
-        max_prompt_length=args.max_prompt_length,
         max_completion_length=args.max_completion_length,
         # optimization
         per_device_train_batch_size=args.per_device_batch,
@@ -205,10 +204,16 @@ def main() -> None:
     else:
         print("[train] vLLM off — using transformers generation (slower).")
 
-    # GRPOConfig's fields drift across TRL versions (e.g. max_prompt_length was
-    # removed in newer releases). Keep only kwargs this installed version accepts,
-    # and say what we dropped rather than crashing.
+    # Prompt-length control moved/was removed across TRL versions: only pass
+    # max_prompt_length when this GRPOConfig actually supports it (TRL <1.9),
+    # instead of adding-then-dropping it (which spammed a warning every run).
     valid = {f.name for f in dataclasses.fields(GRPOConfig)}
+    if "max_prompt_length" in valid:
+        grpo_kwargs["max_prompt_length"] = args.max_prompt_length
+
+    # Safety net for any *other* field drift: drop unknown kwargs loudly rather
+    # than crash. With max_prompt_length handled above, this should normally be
+    # empty on a supported TRL.
     dropped = sorted(set(grpo_kwargs) - valid)
     for k in dropped:
         print(f"[train] note: trl {trl.__version__} GRPOConfig has no '{k}'; dropping it.")
