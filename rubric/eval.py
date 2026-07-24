@@ -2,8 +2,13 @@
 
 Run it before and after training to see behavior reach what we want:
 
-    uv run python eval.py                                   # base model
-    uv run python eval.py --adapter outputs/rubric-grpo     # trained LoRA
+    python eval.py --config configs/multiplication.yaml            # base model
+    python eval.py --config configs/multiplication.yaml \
+        --adapter outputs/multiplication-grpo                      # trained LoRA
+
+Pass --config to reuse a training config's `grader:` block (and its policy
+`model`), so the grader endpoint is defined in exactly one place. CLI flags still
+override the config; without --config the grader falls back to GRADER_* env vars.
 
 Reports the mean rubric score over the test set and prints a few sample
 completions so you can eyeball *how* the answers changed, not just the number.
@@ -14,6 +19,7 @@ from __future__ import annotations
 import argparse
 
 import torch
+import yaml
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from data import load_jsonl
@@ -39,7 +45,8 @@ def generate(model, tok, convo, max_new_tokens: int) -> str:
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--model", default="Qwen/Qwen2.5-1.5B-Instruct")
+    ap.add_argument("--config", default=None, help="training config to reuse (grader block + policy model)")
+    ap.add_argument("--model", default=None, help="policy model (overrides config)")
     ap.add_argument("--adapter", default=None, help="path to a trained LoRA adapter")
     ap.add_argument("--test-jsonl", default="example_data/addition_test.jsonl")
     ap.add_argument("--limit", type=int, default=100)
@@ -47,9 +54,24 @@ def main() -> None:
     ap.add_argument("--num-samples-to-print", type=int, default=6)
     args = ap.parse_args()
 
-    tok = AutoTokenizer.from_pretrained(args.model)
+    # Grader: env first, then a config's grader block on top (single source of truth).
+    grader_cfg = GraderConfig.from_env()
+    cfg_model = None
+    if args.config:
+        with open(args.config) as f:
+            cfg = yaml.safe_load(f) or {}
+        cfg_model = cfg.get("model")
+        for k, v in (cfg.get("grader") or {}).items():
+            if hasattr(grader_cfg, k):
+                setattr(grader_cfg, k, v)
+        print(f"[eval] grader: {grader_cfg.model} @ {grader_cfg.base_url or 'default(OpenAI)'}")
+
+    # Policy model precedence: --model > config model > fallback default.
+    model_name = args.model or cfg_model or "Qwen/Qwen2.5-1.5B-Instruct"
+
+    tok = AutoTokenizer.from_pretrained(model_name)
     model = AutoModelForCausalLM.from_pretrained(
-        args.model, dtype=torch.bfloat16, device_map="auto"
+        model_name, dtype=torch.bfloat16, device_map="auto"
     )
     if args.adapter:
         from peft import PeftModel
@@ -65,7 +87,7 @@ def main() -> None:
         convos.append(dp.convo + [{"role": "assistant", "content": answer}])
         rubrics.append(dp.rubric_items)
 
-    scores = RubricGrader(GraderConfig.from_env()).grade_batch(convos, rubrics)
+    scores = RubricGrader(grader_cfg).grade_batch(convos, rubrics)
     mean = sum(scores) / len(scores) if scores else 0.0
 
     tag = f"adapter={args.adapter}" if args.adapter else "base model"
