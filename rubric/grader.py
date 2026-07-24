@@ -36,7 +36,7 @@ _GRADER_SYSTEM = (
 class GraderConfig:
     base_url: str | None = None
     api_key: str = "EMPTY"
-    model: str = "Qwen/Qwen2.5-7B-Instruct"
+    model: str = "Qwen/Qwen3-4B-Instruct-2507"
     max_tokens: int = 512
     temperature: float = 0.0
     max_concurrency: int = 64
@@ -52,7 +52,7 @@ class GraderConfig:
         return GraderConfig(
             base_url=os.environ.get("GRADER_BASE_URL"),
             api_key=os.environ.get("GRADER_API_KEY", "EMPTY"),
-            model=os.environ.get("GRADER_MODEL", "Qwen/Qwen2.5-7B-Instruct"),
+            model=os.environ.get("GRADER_MODEL", "Qwen/Qwen3-4B-Instruct-2507"),
             max_tokens=int(os.environ.get("GRADER_MAX_TOKENS", "512")),
             temperature=float(os.environ.get("GRADER_TEMPERATURE", "0.0")),
             max_concurrency=int(os.environ.get("GRADER_MAX_CONCURRENCY", "64")),

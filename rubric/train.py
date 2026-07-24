@@ -8,9 +8,9 @@ Prereqs:
   1. uv sync --extra train           # installs trl, vllm, peft, ...
   2. python tasks/addition.py        # writes example_data/addition_{train,test}.jsonl
   3. Stand up a grader endpoint (any OpenAI-compatible server), e.g. on another
-     GPU/host:  vllm serve Qwen/Qwen2.5-7B-Instruct --port 8001
+     same or another GPU:  vllm serve Qwen/Qwen3-4B-Instruct-2507 --port 8001
      then:      export GRADER_BASE_URL=http://localhost:8001/v1
-                export GRADER_MODEL=Qwen/Qwen2.5-7B-Instruct
+                export GRADER_MODEL=Qwen/Qwen3-4B-Instruct-2507
 
 Launch:
   uv run python train.py                       # defaults below

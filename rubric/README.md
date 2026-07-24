@@ -73,9 +73,9 @@ uv pip install --system -e '.[train]'
 python tasks/addition.py                 # -> example_data/addition_{train,test}.jsonl
 
 # 2) grader endpoint (a second GPU/host, or CPU for a tiny model)
-vllm serve Qwen/Qwen2.5-7B-Instruct --port 8001 &
+vllm serve Qwen/Qwen3-4B-Instruct-2507 --port 8001 &
 export GRADER_BASE_URL=http://localhost:8001/v1
-export GRADER_MODEL=Qwen/Qwen2.5-7B-Instruct
+export GRADER_MODEL=Qwen/Qwen3-4B-Instruct-2507
 export GRADER_API_KEY=EMPTY
 
 # 3) baseline behavior

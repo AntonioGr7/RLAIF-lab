@@ -36,10 +36,11 @@ save_steps: 50
 wandb_project: rubric-rlaif
 
 # Grader (reference-free): it judges groundedness + answer/abstain from the
-# passage alone. Use a STRONG grader — it IS the reward. Validate its agreement
-# with human labels before trusting it.
+# passage alone. The grader IS the reward — validate its agreement with human
+# labels before trusting it. Qwen3-4B fits on the same GPU as training; if you
+# have spare VRAM/GPUs, a stronger grader gives a cleaner reward signal.
 grader:
-  model: Qwen/Qwen2.5-72B-Instruct
+  model: Qwen/Qwen3-4B-Instruct-2507
   temperature: 0.0
   max_tokens: 1024             # room to reason before the <score>
   max_concurrency: 32
