@@ -14,13 +14,14 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# The A100 training stack. torch is pinned to the RunPod image's preinstalled
-# 2.8.0 (cu128) so uv reuses it instead of pulling a mismatched build. NOTE:
-# vLLM is intentionally NOT here — TRL trains fine with plain `transformers`
-# generation. Add the `vllm` extra only if you want fast colocated generation
-# ON THIS machine (a remote grader server needs nothing installed here).
+# The A100 training stack. torch is intentionally NOT listed: the RunPod image
+# ships torch 2.8.0+cu128 and it satisfies trl/transformers' torch requirement,
+# so uv leaves it untouched. (Listing it — especially with a pinned index source
+# — makes uv "correct" the provenance and redownload the ~850MB wheel.) If you're
+# on a machine WITHOUT torch, install it first from the cu128 index:
+#     uv pip install --system torch==2.8.0 --index https://download.pytorch.org/whl/cu128
+# vLLM is also excluded here — TRL trains fine with plain transformers generation.
 train = [
-    "torch==2.8.0",
     "trl>=0.15",
     "transformers>=4.51",
     "peft>=0.14",
@@ -31,12 +32,3 @@ train = [
 # skip it if the grader is remote and you're fine with slower HF generation
 # (run train.py with --no-use-vllm in that case). vllm>=0.10.1 supports torch 2.8.
 vllm = ["vllm>=0.10.1"]
-
-# Pull the CUDA 12.8 torch build (matches the image), not the default PyPI wheel.
-[[tool.uv.index]]
-name = "pytorch-cu128"
-url = "https://download.pytorch.org/whl/cu128"
-explicit = true
-
-[tool.uv.sources]
-torch = { index = "pytorch-cu128" }
