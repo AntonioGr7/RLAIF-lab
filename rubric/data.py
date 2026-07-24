@@ -82,11 +82,16 @@ class Rubric:
         "the grader said 0" and "the grader ignored the format" are different
         events, and only the caller can see how often the latter happens.
 
-        We take the LAST match, not the first: graders often reason out loud and
-        echo the format instruction (which itself contains ``<score>...</score>``)
-        before stating the final verdict. The verdict is the last score tag.
+        For thinking models the verdict is whatever comes AFTER the final
+        ``</think>`` — the reasoning block can contain many stray score tags
+        (echoing the format instruction). So we drop everything up to and
+        including the last ``</think>``, then take the last match in what remains
+        (a final belt-and-suspenders against any trailing echo).
         """
-        matches = re.findall(self.extraction_regex, grader_reply, re.DOTALL)
+        reply = grader_reply
+        if "</think>" in reply:
+            reply = reply.rsplit("</think>", 1)[-1]
+        matches = re.findall(self.extraction_regex, reply, re.DOTALL)
         if not matches:
             return None
         try:

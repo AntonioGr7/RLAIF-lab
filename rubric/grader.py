@@ -37,7 +37,7 @@ class GraderConfig:
     base_url: str | None = None
     api_key: str = "EMPTY"
     model: str = "Qwen/Qwen3-4B-Instruct-2507"
-    max_tokens: int = 512
+    max_tokens: int = 1024  # room for a thinking model's reasoning + verdict
     temperature: float = 0.0
     max_concurrency: int = 64
     # Robustness knobs
@@ -45,15 +45,20 @@ class GraderConfig:
     timeout: float | None = None  # per-request seconds; None = SDK default
     on_error: str = "raise"  # "raise" (fail loud) | "zero" (score 0.0 and continue)
     reasoning: bool = False  # o-series/reasoning models: use max_completion_tokens
+    # For open thinking models (Qwen3, ...) served via vLLM: None = server default,
+    # False = disable the <think> block for a short, fast, unambiguous verdict.
+    # Sent as chat_template_kwargs; only vLLM/compatible servers honor it.
+    enable_thinking: bool | None = None
 
     @staticmethod
     def from_env() -> "GraderConfig":
         timeout = os.environ.get("GRADER_TIMEOUT")
+        thinking = os.environ.get("GRADER_ENABLE_THINKING")
         return GraderConfig(
             base_url=os.environ.get("GRADER_BASE_URL"),
             api_key=os.environ.get("GRADER_API_KEY", "EMPTY"),
             model=os.environ.get("GRADER_MODEL", "Qwen/Qwen3-4B-Instruct-2507"),
-            max_tokens=int(os.environ.get("GRADER_MAX_TOKENS", "512")),
+            max_tokens=int(os.environ.get("GRADER_MAX_TOKENS", "1024")),
             temperature=float(os.environ.get("GRADER_TEMPERATURE", "0.0")),
             max_concurrency=int(os.environ.get("GRADER_MAX_CONCURRENCY", "64")),
             max_retries=int(os.environ.get("GRADER_MAX_RETRIES", "6")),
@@ -61,6 +66,9 @@ class GraderConfig:
             on_error=os.environ.get("GRADER_ON_ERROR", "raise"),
             reasoning=os.environ.get("GRADER_REASONING", "").lower()
             in ("1", "true", "yes"),
+            enable_thinking=None
+            if thinking is None
+            else thinking.lower() in ("1", "true", "yes"),
         )
 
 
@@ -102,6 +110,12 @@ class RubricGrader:
         else:
             params["max_tokens"] = self.cfg.max_tokens
             params["temperature"] = self.cfg.temperature
+        if self.cfg.enable_thinking is not None:
+            # vLLM passes chat_template_kwargs to the model's chat template;
+            # Qwen3 etc. read enable_thinking to toggle the <think> block.
+            params["extra_body"] = {
+                "chat_template_kwargs": {"enable_thinking": self.cfg.enable_thinking}
+            }
         return params
 
     async def _score_one(self, client, sem, convo: Conversation, rubric: Rubric) -> float:
