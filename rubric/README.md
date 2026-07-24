@@ -62,17 +62,19 @@ Target host: `runpod/pytorch:2.8.0-py3.11-cuda12.8.1-cudnn-devel-ubuntu22.04`
 ```bash
 cd rubric
 
-# Install INTO the image's env so the preinstalled torch 2.8.0 is reused
-# (no multi-GB reinstall, no CUDA-build mismatch):
-uv pip install --system -e '.[train]'
+# Standard install — INTO the image's env so the preinstalled torch 2.8.0 is
+# reused (no multi-GB reinstall, no CUDA-build mismatch). vLLM is included
+# because GRPO generates many completions per step and colocated vLLM is the
+# normal, fast way to do that — it accelerates the POLICY generation on this GPU
+# (separate from the grader server, which is remote/OpenAI-compatible):
+uv pip install --system -e '.[train,vllm]'
 
-# Add the vllm extra ONLY if you want fast colocated generation on this box.
-# Skip it if the grader is remote / you're fine with slower HF generation
-# (then train with --no-use-vllm):
-#   uv pip install --system -e '.[train,vllm]'
+# Fallback only for machines that can't build vLLM: install the lighter stack and
+# train with --no-use-vllm (plain transformers generation — much slower):
+#   uv pip install --system -e '.[train]'   &&   python train.py ... --no-use-vllm
 
 # --- or, isolated venv instead (uv pulls torch 2.8.0+cu128 fresh): ---
-# uv sync --extra train      # then prefix the commands below with `uv run`
+# uv sync --extra train --extra vllm      # then prefix the commands below with `uv run`
 
 # 1) data
 python tasks/addition.py                 # -> example_data/addition_{train,test}.jsonl
@@ -119,9 +121,15 @@ See [.env.example](.env.example) for grader configuration.
   configures the grader endpoint and overrides the env vars.
   [configs/realistic_template.yaml](configs/realistic_template.yaml) is a starting
   point for a real task (KL on, longer completions, stronger grader).
-- **Single-GPU memory.** vLLM runs *colocated* (`vllm_mode="colocate"`) and is
-  capped at `--vllm-gpu-mem 0.3` of VRAM; the rest is for LoRA training. Drop the
-  fraction if you hit OOM, or move generation to a second GPU.
+- **Two models, two jobs.** The **policy** (trained here) is generated *locally* —
+  colocated vLLM (`vllm_mode="colocate"`) accelerates that on the training GPU, and
+  it's the standard/fast path (transformers via `--no-use-vllm` is a slow fallback).
+  The **grader** is a *separate* model on a remote/OpenAI-compatible server. They
+  never share weights or hardware — don't confuse "the remote vLLM" (grader) with
+  "local vLLM" (policy generation).
+- **Single-GPU memory.** Colocated vLLM is capped at `--vllm-gpu-mem 0.3` of VRAM;
+  the rest is LoRA training. Since the grader is remote, the whole GPU is free for
+  the policy — bump the fraction for a bigger generation batch, or drop it on OOM.
 - **Group size.** `--num-generations G` is the GRPO group. `per_device_batch *
   grad_accum` must be divisible by `G` (the script checks and explains if not).
 - **KL.** `--beta 0.0` matches the reference (no KL penalty). Raise it (e.g. `0.02`)

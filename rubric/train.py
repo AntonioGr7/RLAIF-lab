@@ -4,19 +4,22 @@ Design mirrors the tinker_cookbook rubric recipe (policy samples a group of
 completions per prompt, an LLM grader scores each against the rubric, reward =
 mean rubric score, RL update), but runs locally on open weights via TRL + vLLM.
 
+Two separate models: the POLICY (trained here; generated locally, accelerated by
+colocated vLLM) and the GRADER (a remote/OpenAI-compatible server that scores).
+
 Prereqs:
-  1. uv sync --extra train           # installs trl, vllm, peft, ...
+  1. uv pip install --system -e '.[train,vllm]'   # policy generation uses local vLLM
   2. python tasks/addition.py        # writes example_data/addition_{train,test}.jsonl
-  3. Stand up a grader endpoint (any OpenAI-compatible server), e.g. on another
-     same or another GPU:  vllm serve Qwen/Qwen3-4B-Instruct-2507 --port 8001
+  3. Stand up a GRADER endpoint (any OpenAI-compatible server; a different model,
+     often on another machine):  vllm serve Qwen/Qwen3-4B-Instruct-2507 --port 8001
      then:      export GRADER_BASE_URL=http://localhost:8001/v1
                 export GRADER_MODEL=Qwen/Qwen3-4B-Instruct-2507
 
 Launch:
-  uv run python train.py                       # defaults below
-  uv run python train.py --model Qwen/Qwen2.5-0.5B-Instruct --max-steps 150
+  python train.py --config configs/addition.yaml
+  python train.py --config configs/addition.yaml --no-use-vllm   # fallback: no local vLLM (slow)
 
-Watch `reward` climb and `loss` move in the logs (or in wandb with --wandb-project).
+Watch `reward` climb in the compact per-step log (or in wandb with --wandb-project).
 """
 
 from __future__ import annotations
