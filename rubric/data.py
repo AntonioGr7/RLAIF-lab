@@ -119,16 +119,23 @@ class Rubric:
 
 @dataclass
 class RubricDatapoint:
-    """A conversation prefix the policy continues + the rubric(s) grading it."""
+    """A conversation prefix the policy continues + the rubric(s) grading it.
+
+    ``meta`` holds task bookkeeping (e.g. gold answer, answerability) that is NOT
+    shown to the policy or the grader — it exists purely so an independent eval
+    can score the model without trusting the training grader. Training ignores it.
+    """
 
     convo: Conversation
     rubric_items: list[Rubric] = field(default_factory=list)
+    meta: dict = field(default_factory=dict)
 
     def to_json(self) -> str:
         return json.dumps(
             {
                 "convo": self.convo,
                 "rubric_items": [r.to_dict() for r in self.rubric_items],
+                "meta": self.meta,
             }
         )
 
@@ -138,6 +145,7 @@ class RubricDatapoint:
         return RubricDatapoint(
             convo=d["convo"],
             rubric_items=[Rubric.from_dict(r) for r in d["rubric_items"]],
+            meta=d.get("meta", {}),
         )
 
 
