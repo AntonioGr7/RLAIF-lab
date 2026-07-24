@@ -1,0 +1,37 @@
+[project]
+name = "rubric-rlaif"
+version = "0.1.0"
+description = "Rubric-based RLAIF (Rubrics as Rewards) — single-A100 GRPO recipe"
+# Target host: runpod/pytorch:2.8.0-py3.11-cuda12.8.1-cudnn-devel-ubuntu22.04
+requires-python = ">=3.11,<3.12"
+# Core needs: build data + talk to an OpenAI-compatible grader. Kept light so
+# `generate_data.py` / the grader run anywhere. The heavy RL/GPU stack is in
+# the `train` extra.
+dependencies = [
+    "openai>=1.40",
+    "datasets>=2.19",
+]
+
+[project.optional-dependencies]
+# The A100 training stack. Versions are aligned to the RunPod image above:
+# torch is pinned to the preinstalled 2.8.0 (cu128) so uv reuses it instead of
+# pulling a mismatched build; vllm>=0.10.1 is the first line that supports
+# torch 2.8. If you install into the image's own env (see README), torch is
+# already satisfied and won't be reinstalled.
+train = [
+    "torch==2.8.0",
+    "vllm>=0.10.1",
+    "trl>=0.15",
+    "transformers>=4.51",
+    "peft>=0.14",
+    "accelerate>=1.2",
+]
+
+# Pull the CUDA 12.8 torch build (matches the image), not the default PyPI wheel.
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu128" }
