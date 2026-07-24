@@ -1,0 +1,45 @@
+# Multiplication — arithmetic task WITH a learning curve (unlike addition, which a
+# small instruct model already solves -> zero-variance groups -> no gradient).
+#   python tasks/multiplication.py --max-a 99 --max-b 999
+#   python train.py --config configs/multiplication.yaml --no-use-vllm
+#
+# Watch reward_std / frac_reward_zero_std: you WANT reward_std > 0 (mixed groups).
+# If frac_reward_zero_std ~1.0, the difficulty is wrong (too easy or too hard) —
+# retune --max-a/--max-b in the generator.
+
+# Model / data
+model: Qwen/Qwen2.5-1.5B-Instruct
+train_jsonl: example_data/multiplication_train.jsonl
+output_dir: outputs/multiplication-grpo
+
+# GRPO core
+num_generations: 8            # group size — needs to be >1 to have any variance
+per_device_batch: 16
+grad_accum: 4
+learning_rate: 1.0e-5
+beta: 0.0
+temperature: 1.0              # keep >0 so samples in a group differ
+max_completion_length: 16     # a product is a short integer
+max_steps: 200
+
+# LoRA
+lora_rank: 32
+lora_alpha: 64
+
+# Generation backend
+use_vllm: true                # false / --no-use-vllm for transformers generation
+vllm_gpu_mem: 0.3
+
+# Logging
+logging_steps: 1
+save_steps: 50
+wandb_project: null
+
+# Grader: your remote RunPod vLLM server (35B). These override the GRADER_* env
+# vars, so the run works even without exporting them.
+grader:
+  base_url: 
+  model: Qwen/Qwen3.5-35B-A3B-GPTQ-Int4
+  temperature: 0.0
+  max_concurrency: 32
+  on_error: raise

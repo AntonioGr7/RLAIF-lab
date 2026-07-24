@@ -4,7 +4,11 @@ One dataset generator per task. Each script builds a jsonl of `RubricDatapoint`s
 (see [../data.py](../data.py)) that `train.py` / `eval.py` consume via the
 `train_jsonl` / `test_jsonl` paths in a [config](../configs).
 
-- [addition.py](addition.py) — the `a + b` demo task (verifiable, single criterion).
+- [addition.py](addition.py) — the `a + b` demo task. NOTE: small instruct models
+  already solve it (~1.0 at step 0) → zero-variance groups → no gradient. Good for
+  testing the pipeline, not for showing a learning curve.
+- [multiplication.py](multiplication.py) — `a * b`, harder, tunable difficulty so
+  groups come out mixed (the variance GRPO needs). Use this to see reward climb.
 - [rag_groundedness.py](rag_groundedness.py) — RAG groundedness + faithful
   abstention from SQuAD v2 (reference-free, two criteria, answerable/unanswerable
   mix). A realistic example; see [../configs/rag_groundedness.yaml](../configs/rag_groundedness.yaml).
