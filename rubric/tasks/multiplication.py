@@ -39,12 +39,15 @@ def make_one(rng: random.Random, max_a: int, max_b: int) -> RubricDatapoint:
         rubric_items=[
             Rubric(
                 rubric_str=(
-                    f"Does the chatbot's completion give the correct answer, "
-                    f"which is {a * b}? Award 1 only if the number {a * b} is the "
-                    f"stated result; otherwise award 0."
+                    f"The correct answer to this multiplication is exactly {a * b}. "
+                    f"Do NOT recompute the product yourself — only compare digit for "
+                    f"digit. Find the number the chatbot stated as its result. If "
+                    f"that number is exactly {a * b}, it is correct; if it is any "
+                    f"other number, it is incorrect."
                 ),
                 grader_output_format_instruction=(
-                    "Output <score>1</score> if correct, else <score>0</score>."
+                    f"Output <score>1</score> if the stated number is exactly {a * b}, "
+                    f"otherwise <score>0</score>."
                 ),
             )
         ],

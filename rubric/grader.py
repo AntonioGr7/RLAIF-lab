@@ -77,22 +77,21 @@ class RubricGrader:
     """Scores (conversation, rubric) pairs by asking an LLM for a numeric score."""
 
     def __init__(self, config: GraderConfig | None = None):
-        from openai import AsyncOpenAI
-
         self.cfg = config or GraderConfig.from_env()
         if self.cfg.on_error not in ("raise", "zero"):
             raise ValueError(f"on_error must be 'raise' or 'zero', got {self.cfg.on_error!r}")
-        client_kwargs: dict = {
+        self._stats = GraderStats()
+        self.last_stats = GraderStats()
+
+    def _client_kwargs(self) -> dict:
+        kw: dict = {
             "base_url": self.cfg.base_url,
             "api_key": self.cfg.api_key,
             "max_retries": self.cfg.max_retries,
         }
         if self.cfg.timeout is not None:
-            client_kwargs["timeout"] = self.cfg.timeout
-        self._client = AsyncOpenAI(**client_kwargs)
-        self._sem = asyncio.Semaphore(self.cfg.max_concurrency)
-        self._stats = GraderStats()
-        self.last_stats = GraderStats()
+            kw["timeout"] = self.cfg.timeout
+        return kw
 
     def _request_params(self, messages: list[dict]) -> dict:
         """Build create() kwargs, accounting for reasoning-model quirks."""
@@ -105,15 +104,15 @@ class RubricGrader:
             params["temperature"] = self.cfg.temperature
         return params
 
-    async def _score_one(self, convo: Conversation, rubric: Rubric) -> float:
+    async def _score_one(self, client, sem, convo: Conversation, rubric: Rubric) -> float:
         messages = [
             {"role": "system", "content": _GRADER_SYSTEM},
             {"role": "user", "content": rubric.grader_prompt(convo)},
         ]
-        async with self._sem:
+        async with sem:
             self._stats.calls += 1
             try:
-                resp = await self._client.chat.completions.create(
+                resp = await client.chat.completions.create(
                     **self._request_params(messages)
                 )
             except Exception as e:  # noqa: BLE001 — retries already exhausted by the SDK
@@ -136,20 +135,33 @@ class RubricGrader:
         return score
 
     async def _score_datapoint(
-        self, convo: Conversation, rubrics: list[Rubric]
+        self, client, sem, convo: Conversation, rubrics: list[Rubric]
     ) -> float:
         """Mean score across all rubric items for one completion."""
-        scores = await asyncio.gather(*(self._score_one(convo, r) for r in rubrics))
+        scores = await asyncio.gather(
+            *(self._score_one(client, sem, convo, r) for r in rubrics)
+        )
         return sum(scores) / len(scores) if scores else 0.0
 
     async def _grade_batch_async(
         self, convos: list[Conversation], rubrics: list[list[Rubric]]
     ) -> list[float]:
-        return list(
-            await asyncio.gather(
-                *(self._score_datapoint(c, r) for c, r in zip(convos, rubrics))
+        # Create the client + semaphore INSIDE the run so they bind to this call's
+        # event loop. grade_batch() is invoked once per training step via
+        # asyncio.run(), which opens and closes a fresh loop each time — reusing a
+        # client/semaphore across those loops raises "bound to a different loop".
+        from openai import AsyncOpenAI
+
+        sem = asyncio.Semaphore(self.cfg.max_concurrency)
+        async with AsyncOpenAI(**self._client_kwargs()) as client:
+            return list(
+                await asyncio.gather(
+                    *(
+                        self._score_datapoint(client, sem, c, r)
+                        for c, r in zip(convos, rubrics)
+                    )
+                )
             )
-        )
 
     def grade_batch(
         self, convos: list[Conversation], rubrics: list[list[Rubric]]
