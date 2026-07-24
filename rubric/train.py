@@ -80,6 +80,12 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--logging-steps", type=int, default=1)
     ap.add_argument("--save-steps", type=int, default=40)
     ap.add_argument("--wandb-project", default=None)
+    ap.add_argument(
+        "--log-completions",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="print TRL's per-step completion tables (noisy; off by default)",
+    )
     return ap
 
 
@@ -132,7 +138,28 @@ def main() -> None:
 
     import trl
     from peft import LoraConfig
+    from transformers import TrainerCallback
     from trl import GRPOConfig, GRPOTrainer
+
+    class CompactLogCallback(TrainerCallback):
+        """One tight line per step instead of TRL's 25-key metrics dict."""
+
+        def __init__(self, total):
+            self.total = total
+
+        def on_log(self, args, state, control, logs=None, **kwargs):
+            if not logs or "reward" not in logs:
+                return  # skip non-training logs (final summary, eval, ...)
+            f = lambda k, d=3: f"{logs[k]:.{d}f}" if k in logs else "-"
+            line = (
+                f"step {state.global_step:>4}/{self.total}  "
+                f"reward {f('reward')}  std {f('reward_std')}  "
+                f"zero_std {f('frac_reward_zero_std', 2)}  "
+                f"grad {f('grad_norm', 2)}  loss {f('loss', 4)}"
+            )
+            if "kl" in logs:
+                line += f"  kl {f('kl', 4)}"
+            print(line, flush=True)
 
     # Grader config: start from env, then apply any `grader:` block from the YAML.
     grader_cfg = GraderConfig.from_env()
@@ -166,7 +193,7 @@ def main() -> None:
         # logging
         logging_steps=args.logging_steps,
         save_steps=args.save_steps,
-        log_completions=True,
+        log_completions=args.log_completions,
         num_completions_to_print=4,
         report_to="wandb" if args.wandb_project else "none",
         run_name="rubric-grpo",
@@ -207,6 +234,16 @@ def main() -> None:
         train_dataset=train_ds,
         peft_config=lora_config,
     )
+
+    # Replace TRL/transformers' noisy default logging (the 25-key metrics dict
+    # printer) with one compact reward-focused line per step. Keep the tqdm bar
+    # unless completion tables are on (they clash with the bar).
+    from transformers.trainer_callback import PrinterCallback, ProgressCallback
+
+    trainer.remove_callback(PrinterCallback)
+    trainer.remove_callback(ProgressCallback)
+    trainer.add_callback(CompactLogCallback(total=args.max_steps))
+
     trainer.train()
     trainer.save_model(args.output_dir)
     print(f"saved LoRA adapter -> {args.output_dir}")
