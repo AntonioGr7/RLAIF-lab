@@ -21,17 +21,20 @@ from grader import GraderConfig, RubricGrader
 
 
 def generate(model, tok, convo, max_new_tokens: int) -> str:
+    # return_dict=True -> {input_ids, attention_mask}; newer transformers no longer
+    # returns a bare tensor here, so pass the dict through with **inputs.
     inputs = tok.apply_chat_template(
-        convo, add_generation_prompt=True, return_tensors="pt"
+        convo, add_generation_prompt=True, return_tensors="pt", return_dict=True
     ).to(model.device)
     with torch.no_grad():
         out = model.generate(
-            inputs,
+            **inputs,
             max_new_tokens=max_new_tokens,
             do_sample=False,
             pad_token_id=tok.eos_token_id,
         )
-    return tok.decode(out[0, inputs.shape[1] :], skip_special_tokens=True).strip()
+    prompt_len = inputs["input_ids"].shape[1]
+    return tok.decode(out[0, prompt_len:], skip_special_tokens=True).strip()
 
 
 def main() -> None:
@@ -46,7 +49,7 @@ def main() -> None:
 
     tok = AutoTokenizer.from_pretrained(args.model)
     model = AutoModelForCausalLM.from_pretrained(
-        args.model, torch_dtype=torch.bfloat16, device_map="auto"
+        args.model, dtype=torch.bfloat16, device_map="auto"
     )
     if args.adapter:
         from peft import PeftModel
