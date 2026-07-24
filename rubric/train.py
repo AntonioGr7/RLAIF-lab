@@ -128,6 +128,9 @@ def main() -> None:
         )
 
     # Imported here so data generators / the grader don't need the heavy train stack.
+    import dataclasses
+
+    import trl
     from peft import LoraConfig
     from trl import GRPOConfig, GRPOTrainer
 
@@ -174,6 +177,15 @@ def main() -> None:
         grpo_kwargs["vllm_gpu_memory_utilization"] = args.vllm_gpu_mem
     else:
         print("[train] vLLM off — using transformers generation (slower).")
+
+    # GRPOConfig's fields drift across TRL versions (e.g. max_prompt_length was
+    # removed in newer releases). Keep only kwargs this installed version accepts,
+    # and say what we dropped rather than crashing.
+    valid = {f.name for f in dataclasses.fields(GRPOConfig)}
+    dropped = sorted(set(grpo_kwargs) - valid)
+    for k in dropped:
+        print(f"[train] note: trl {trl.__version__} GRPOConfig has no '{k}'; dropping it.")
+    grpo_kwargs = {k: v for k, v in grpo_kwargs.items() if k in valid}
     grpo_config = GRPOConfig(**grpo_kwargs)
     if args.wandb_project:
         import os
