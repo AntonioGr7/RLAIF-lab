@@ -23,8 +23,9 @@ max_steps: 120
 lora_rank: 32
 lora_alpha: 64
 
-# vLLM generation (colocated on the same A100)
-vllm_gpu_mem: 0.3
+# Generation backend
+use_vllm: true              # false -> transformers generation (no vllm install needed)
+vllm_gpu_mem: 0.3           # colocated vLLM's share of VRAM (only used if use_vllm)
 
 # Logging
 logging_steps: 1

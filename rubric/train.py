@@ -66,7 +66,15 @@ def build_parser() -> argparse.ArgumentParser:
     # LoRA
     ap.add_argument("--lora-rank", type=int, default=32)
     ap.add_argument("--lora-alpha", type=int, default=64)
-    # vLLM generation (colocated on the same A100)
+    # Generation backend. vLLM (colocated on the same GPU) is fast but a heavy
+    # install; --no-use-vllm falls back to plain transformers generation (slower,
+    # no vllm dependency). The grader server is unrelated to this flag.
+    ap.add_argument(
+        "--use-vllm",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="use colocated vLLM for generation (needs the `vllm` extra)",
+    )
     ap.add_argument("--vllm-gpu-mem", type=float, default=0.3)
     # Logging
     ap.add_argument("--logging-steps", type=int, default=1)
@@ -136,7 +144,7 @@ def main() -> None:
     train_ds = build_dataset(args.train_jsonl)
     reward_fn = make_rubric_reward(grader_cfg)
 
-    grpo_config = GRPOConfig(
+    grpo_kwargs = dict(
         output_dir=args.output_dir,
         # sampling / groups
         num_generations=args.num_generations,
@@ -151,10 +159,7 @@ def main() -> None:
         max_steps=args.max_steps,
         bf16=True,
         gradient_checkpointing=True,
-        # fast generation, colocated with training on one GPU
-        use_vllm=True,
-        vllm_mode="colocate",
-        vllm_gpu_memory_utilization=args.vllm_gpu_mem,
+        use_vllm=args.use_vllm,
         # logging
         logging_steps=args.logging_steps,
         save_steps=args.save_steps,
@@ -163,6 +168,13 @@ def main() -> None:
         report_to="wandb" if args.wandb_project else "none",
         run_name="rubric-grpo",
     )
+    if args.use_vllm:
+        # colocated on the same GPU as training; only touched when vLLM is on.
+        grpo_kwargs["vllm_mode"] = "colocate"
+        grpo_kwargs["vllm_gpu_memory_utilization"] = args.vllm_gpu_mem
+    else:
+        print("[train] vLLM off — using transformers generation (slower).")
+    grpo_config = GRPOConfig(**grpo_kwargs)
     if args.wandb_project:
         import os
 

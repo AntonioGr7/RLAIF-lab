@@ -66,15 +66,22 @@ cd rubric
 # (no multi-GB reinstall, no CUDA-build mismatch):
 uv pip install --system -e '.[train]'
 
+# Add the vllm extra ONLY if you want fast colocated generation on this box.
+# Skip it if the grader is remote / you're fine with slower HF generation
+# (then train with --no-use-vllm):
+#   uv pip install --system -e '.[train,vllm]'
+
 # --- or, isolated venv instead (uv pulls torch 2.8.0+cu128 fresh): ---
 # uv sync --extra train      # then prefix the commands below with `uv run`
 
 # 1) data
 python tasks/addition.py                 # -> example_data/addition_{train,test}.jsonl
 
-# 2) grader endpoint (a second GPU/host, or CPU for a tiny model)
+# 2) grader endpoint — run `vllm serve` where the grader model lives (this box,
+#    another GPU, or another machine) and point the trainer at it. `vllm serve`
+#    is a standalone tool; it does NOT require the `vllm` extra in this project.
 vllm serve Qwen/Qwen3-4B-Instruct-2507 --port 8001 &
-export GRADER_BASE_URL=http://localhost:8001/v1
+export GRADER_BASE_URL=http://localhost:8001/v1     # or http://<other-host>:8001/v1
 export GRADER_MODEL=Qwen/Qwen3-4B-Instruct-2507
 export GRADER_API_KEY=EMPTY
 
@@ -83,6 +90,8 @@ python eval.py                            # base model, mean rubric score
 
 # 4) train (config-driven; CLI flags still override individual values)
 python train.py --config configs/addition.yaml
+# no local vLLM installed? fall back to transformers generation:
+#   python train.py --config configs/addition.yaml --no-use-vllm
 # e.g. override on the fly:  python train.py --config configs/addition.yaml --max-steps 200
 
 # 5) trained behavior

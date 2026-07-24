@@ -14,19 +14,23 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# The A100 training stack. Versions are aligned to the RunPod image above:
-# torch is pinned to the preinstalled 2.8.0 (cu128) so uv reuses it instead of
-# pulling a mismatched build; vllm>=0.10.1 is the first line that supports
-# torch 2.8. If you install into the image's own env (see README), torch is
-# already satisfied and won't be reinstalled.
+# The A100 training stack. torch is pinned to the RunPod image's preinstalled
+# 2.8.0 (cu128) so uv reuses it instead of pulling a mismatched build. NOTE:
+# vLLM is intentionally NOT here — TRL trains fine with plain `transformers`
+# generation. Add the `vllm` extra only if you want fast colocated generation
+# ON THIS machine (a remote grader server needs nothing installed here).
 train = [
     "torch==2.8.0",
-    "vllm>=0.10.1",
     "trl>=0.15",
     "transformers>=4.51",
     "peft>=0.14",
     "accelerate>=1.2",
 ]
+
+# Optional: fast generation during training via colocated vLLM. Heavy install;
+# skip it if the grader is remote and you're fine with slower HF generation
+# (run train.py with --no-use-vllm in that case). vllm>=0.10.1 supports torch 2.8.
+vllm = ["vllm>=0.10.1"]
 
 # Pull the CUDA 12.8 torch build (matches the image), not the default PyPI wheel.
 [[tool.uv.index]]
