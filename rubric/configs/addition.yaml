@@ -15,9 +15,12 @@ per_device_batch: 16        # per_device_batch * grad_accum must be divisible by
 grad_accum: 4
 learning_rate: 1.0e-5
 beta: 0.0                   # KL coef; 0 = off (fine for this narrow task)
+loss_type: dr_grpo          # pinned for cross-TRL comparability ('grpo' = reference loss)
+scale_rewards: none         # Dr. GRPO: don't divide the advantage by the group std
 temperature: 1.0
 max_prompt_length: 256
 max_completion_length: 32   # answers are a single integer
+mask_truncated_completions: true   # don't train on truncated (capped) completions — reward is an artifact
 max_steps: 120
 gradient_checkpointing: false   # 1.5B LoRA fits easily on a free A100 — off is faster
 

@@ -23,8 +23,11 @@ per_device_batch: 8
 grad_accum: 8                  # effective 64 -> 8 prompts/step
 learning_rate: 1.0e-6          # gentle; behavioral shift, not a big capability move
 beta: 0.02                     # KL leash ON — groundedness rewards are gameable
+loss_type: dr_grpo             # pinned for cross-TRL comparability ('grpo' = reference loss)
+scale_rewards: none            # Dr. GRPO: don't divide the advantage by the group std
 temperature: 1.0
 max_completion_length: 200     # room for a real answer or an abstention
+mask_truncated_completions: true   # don't train on truncated (capped) completions — reward is an artifact
 max_steps: 200
 gradient_checkpointing: true    # longer seqs (passage + 200-tok answers); on by default, try false if VRAM allows
 # NOTE: no max_prompt_length — TRL 1.9 dropped it. SQuAD passages (~150-250 tok)

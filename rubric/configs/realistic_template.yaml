@@ -22,10 +22,13 @@ learning_rate: 1.0e-6                   # lower LR for a larger model / softer s
 # to chase grader artifacts. Watch the `kl` metric — if it climbs while reward
 # climbs, you are likely reward-hacking; raise beta.
 beta: 0.02
+loss_type: dr_grpo                      # pinned for cross-TRL comparability ('grpo' = reference loss)
+scale_rewards: none                     # Dr. GRPO: don't divide the advantage by the group std
 
 temperature: 1.0
 max_prompt_length: 1024                 # real prompts are longer than "a + b"
 max_completion_length: 512              # allow real answers; watch length inflation
+mask_truncated_completions: true        # don't train on truncated (capped) completions — reward is an artifact
 max_steps: 500
 gradient_checkpointing: true    # 7B + long completions — keep on to avoid OOM
 

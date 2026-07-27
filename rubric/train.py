@@ -63,10 +63,39 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--grad-accum", type=int, default=4)
     ap.add_argument("--learning-rate", type=float, default=1e-5)
     ap.add_argument("--beta", type=float, default=0.0, help="KL coef (0 = off, as in ref)")
+    # RL objective knobs — pinned (not left to TRL's version-dependent defaults) so
+    # two runs on different TRL builds are comparable. Both are recorded in the run
+    # manifest. See where they're applied for the Dr. GRPO rationale.
+    ap.add_argument(
+        "--loss-type",
+        default="dr_grpo",
+        help="GRPO loss variant. 'dr_grpo' removes the response-length normalization "
+        "bias (Dr. GRPO); 'grpo' is the original reference loss. Pinned for "
+        "cross-version comparability rather than inheriting TRL's default.",
+    )
+    ap.add_argument(
+        "--scale-rewards",
+        default="none",
+        choices=["none", "group", "batch"],
+        help="advantage scaling. 'none' = Dr. GRPO: do NOT divide by the group reward "
+        "std (that biases toward low-variance groups — most groups, on binary "
+        "rewards). 'group'/'batch' divide by group/batch std. On older TRL where the "
+        "field is a bool, 'none' maps to off and anything else to on.",
+    )
     ap.add_argument("--temperature", type=float, default=1.0)
     ap.add_argument("--seed", type=int, default=42, help="RNG seed: weight init, data shuffle, sampling")
     ap.add_argument("--max-prompt-length", type=int, default=256)
     ap.add_argument("--max-completion-length", type=int, default=32)
+    ap.add_argument(
+        "--mask-truncated-completions",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="exclude completions that hit max-completion-length (truncated, no EOS) "
+        "from the loss. Default on: a truncated completion's reward is a truncation "
+        "artifact, not a measurement of policy quality, so training on it teaches "
+        "brevity via the cap rather than via the rubric — two different signals. "
+        "Turn off only if you deliberately want the length cap to act as a penalty.",
+    )
     ap.add_argument("--max-steps", type=int, default=120)
     ap.add_argument(
         "--gradient-checkpointing",
@@ -217,12 +246,14 @@ def main() -> None:
         num_generations=args.num_generations,
         temperature=args.temperature,
         max_completion_length=args.max_completion_length,
+        mask_truncated_completions=args.mask_truncated_completions,
         seed=args.seed,
         # optimization
         per_device_train_batch_size=args.per_device_batch,
         gradient_accumulation_steps=args.grad_accum,
         learning_rate=args.learning_rate,
         beta=args.beta,
+        loss_type=args.loss_type,
         max_steps=args.max_steps,
         bf16=True,
         gradient_checkpointing=args.gradient_checkpointing,
@@ -242,12 +273,29 @@ def main() -> None:
     else:
         print("[train] vLLM off — using transformers generation (slower).")
 
+    fields_by_name = {f.name: f for f in dataclasses.fields(GRPOConfig)}
+    valid = set(fields_by_name)
+
     # Prompt-length control moved/was removed across TRL versions: only pass
     # max_prompt_length when this GRPOConfig actually supports it (TRL <1.9),
     # instead of adding-then-dropping it (which spammed a warning every run).
-    valid = {f.name for f in dataclasses.fields(GRPOConfig)}
     if "max_prompt_length" in valid:
         grpo_kwargs["max_prompt_length"] = args.max_prompt_length
+
+    # scale_rewards drifted bool -> str across TRL versions. Pin it to the requested
+    # behavior in whichever shape this TRL uses, detected from the field's default
+    # value (a bool default => bool API; a str default => "none"/"group"/"batch").
+    if "scale_rewards" in fields_by_name:
+        default = fields_by_name["scale_rewards"].default
+        if isinstance(default, bool):
+            grpo_kwargs["scale_rewards"] = args.scale_rewards != "none"
+        elif isinstance(default, str):
+            grpo_kwargs["scale_rewards"] = args.scale_rewards
+        else:
+            print(
+                f"[train] warning: unexpected scale_rewards default {default!r}; "
+                f"leaving TRL's default in place."
+            )
 
     # Safety net for any *other* field drift: drop unknown kwargs loudly rather
     # than crash. With max_prompt_length handled above, this should normally be
