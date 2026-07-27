@@ -116,6 +116,11 @@ See [.env.example](.env.example) for grader configuration.
   signal for "is it learning" is **reward going up**.
 - **`eval.py`** shows the mean rubric score jump between base and trained, and the
   printed samples go from rambling/incorrect to a bare correct integer.
+- **`[eval] capability=…`** lines during training (every `--eval-steps`) are the
+  grader-free ground-truth accuracy on a held-out slice. Watch them against the
+  reward: **reward rising while capability falls is reward hacking** — the policy
+  is gaming the grader, not getting better. This is the phenomenon the recipe
+  exists to expose, so don't judge a run by final reward alone.
 
 ## Notes & knobs
 
@@ -151,6 +156,12 @@ See [.env.example](.env.example) for grader configuration.
   grad_accum` must be divisible by `G` (the script checks and explains if not).
 - **KL.** `--beta 0.0` matches the reference (no KL penalty). Raise it (e.g. `0.02`)
   if the policy drifts or degenerates.
+- **Grader outage → resume, don't restart.** The grader defaults to `on_error="raise"`
+  (a persistent 429/5xx aborts the step rather than feeding a corrupted 0 reward). The
+  trainer checkpoints every `save_steps`, so recover with
+  `python train.py --config … --resume-from-checkpoint` (bare flag = latest checkpoint,
+  or pass a specific `outputs/…/checkpoint-N`). A failure at step 180/200 costs you the
+  last few steps, not the whole run.
 - **Grader ≠ ground truth.** For addition the grader is near-perfect, which is why
   it's a good *demo*. On real tasks the rubric moves subjectivity from "is this
   good?" to "are these the right criteria?" — smaller, but not zero. Audit grader

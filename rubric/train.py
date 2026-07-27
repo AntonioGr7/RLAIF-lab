@@ -57,6 +57,17 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--model", default="Qwen/Qwen2.5-1.5B-Instruct")
     ap.add_argument("--train-jsonl", default="example_data/addition_train.jsonl")
     ap.add_argument("--output-dir", default="outputs/rubric-grpo")
+    ap.add_argument(
+        "--resume-from-checkpoint",
+        nargs="?",
+        const=True,
+        default=None,
+        help="resume training from a checkpoint in output-dir. Bare flag resumes the "
+        "LATEST checkpoint; pass a path to resume a specific one. Off by default. "
+        "This is the recovery path for the on_error='raise' grader policy: a "
+        "persistent grader outage aborts the run, and you restart from the last "
+        "save_steps checkpoint instead of losing all progress.",
+    )
     # GRPO core
     ap.add_argument("--num-generations", type=int, default=8, help="group size G")
     ap.add_argument("--per-device-batch", type=int, default=16)
@@ -118,6 +129,24 @@ def build_parser() -> argparse.ArgumentParser:
         help="use colocated vLLM for generation (needs the `vllm` extra)",
     )
     ap.add_argument("--vllm-gpu-mem", type=float, default=0.3)
+    # Periodic capability eval — grader-free ground-truth accuracy on a held-out
+    # slice, logged every --eval-steps alongside the reward. This is how you SEE
+    # reward-hacking as it happens: training reward rising while capability falls.
+    ap.add_argument(
+        "--eval-steps",
+        type=int,
+        default=20,
+        help="run a grader-free capability eval every N steps (0 disables). Watch it "
+        "against reward — reward up + capability down = the reward hacking this "
+        "recipe studies.",
+    )
+    ap.add_argument(
+        "--eval-jsonl",
+        default=None,
+        help="held-out set for the periodic eval (defaults to the config's test_jsonl).",
+    )
+    ap.add_argument("--eval-limit", type=int, default=64, help="examples per periodic eval")
+    ap.add_argument("--eval-batch-size", type=int, default=32, help="completions per eval forward batch")
     # Logging
     ap.add_argument("--logging-steps", type=int, default=1)
     ap.add_argument("--save-steps", type=int, default=40)
@@ -207,6 +236,60 @@ def main() -> None:
             if "kl" in logs:
                 line += f"  kl {f('kl', 4)}"
             print(line, flush=True)
+
+    class CapabilityEvalCallback(TrainerCallback):
+        """Every eval_steps, measure grader-free capability on a held-out slice.
+
+        The training reward is the grader's opinion; this is ground truth. Logging
+        them side by side is the point of the recipe — you can watch reward climb
+        while capability falls (reward hacking) instead of only seeing before/after.
+        Uses HF generate on the policy directly (not the trainer's vLLM engine) so
+        it stays portable across TRL versions.
+        """
+
+        def __init__(self, model, tok, dps, max_new_tokens, batch_size, eval_steps):
+            self.model, self.tok, self.dps = model, tok, dps
+            self.max_new_tokens = max_new_tokens
+            self.batch_size = batch_size
+            self.eval_steps = eval_steps
+
+        def _evaluate(self):
+            from eval import capability_score, generate_batch
+
+            was_training = self.model.training
+            prev_cache = getattr(self.model.config, "use_cache", None)
+            self.model.eval()
+            self.model.config.use_cache = True  # generation needs it; grad-ckpt disables it
+            try:
+                completions = generate_batch(
+                    self.model,
+                    self.tok,
+                    [dp.convo for dp in self.dps],
+                    self.max_new_tokens,
+                    self.batch_size,
+                )
+            finally:
+                self.model.config.use_cache = prev_cache
+                if was_training:
+                    self.model.train()
+            return capability_score(self.dps, completions)
+
+        def on_step_end(self, args, state, control, **kwargs):
+            step = state.global_step
+            if not self.eval_steps or step == 0 or step % self.eval_steps != 0:
+                return
+            cap = self._evaluate()
+            if cap is None:
+                return
+            print(f"[eval] step {step:>4}: capability={cap:.3f} (grader-free)", flush=True)
+            if "wandb" in (args.report_to or []):
+                try:
+                    import wandb
+
+                    if wandb.run is not None:
+                        wandb.log({"eval/capability": cap}, step=step)
+                except Exception:  # noqa: BLE001 — logging must never break training
+                    pass
 
     # Grader config: start from env, then apply any `grader:` block from the YAML.
     grader_cfg = GraderConfig.from_env()
@@ -333,7 +416,45 @@ def main() -> None:
     trainer.remove_callback(ProgressCallback)
     trainer.add_callback(CompactLogCallback(total=args.max_steps))
 
-    trainer.train()
+    # Periodic grader-free capability eval. Resolve a held-out set (explicit flag,
+    # else the config's test_jsonl) and register the callback if one is available.
+    eval_jsonl = args.eval_jsonl or getattr(args, "test_jsonl", None)
+    if args.eval_steps and eval_jsonl:
+        from pathlib import Path
+
+        if Path(eval_jsonl).exists():
+            from transformers import AutoTokenizer
+
+            eval_dps = load_jsonl(eval_jsonl)[: args.eval_limit]
+            # A dedicated left-padded tokenizer for batched eval generation — kept
+            # separate so we never mutate the padding side the trainer relies on.
+            eval_tok = AutoTokenizer.from_pretrained(args.model)
+            eval_tok.padding_side = "left"
+            if eval_tok.pad_token_id is None:
+                eval_tok.pad_token = eval_tok.eos_token
+            trainer.add_callback(
+                CapabilityEvalCallback(
+                    trainer.model,
+                    eval_tok,
+                    eval_dps,
+                    args.max_completion_length,
+                    args.eval_batch_size,
+                    args.eval_steps,
+                )
+            )
+            print(
+                f"[eval] periodic capability eval every {args.eval_steps} steps "
+                f"on {len(eval_dps)} held-out examples from {eval_jsonl}"
+            )
+        else:
+            print(f"[eval] skipping periodic eval — {eval_jsonl} not found")
+    elif args.eval_steps:
+        print("[eval] skipping periodic eval — no --eval-jsonl or config test_jsonl")
+
+    if args.resume_from_checkpoint:
+        where = args.resume_from_checkpoint
+        print(f"[train] resuming from {'latest checkpoint' if where is True else where}")
+    trainer.train(resume_from_checkpoint=args.resume_from_checkpoint)
     trainer.save_model(args.output_dir)
     print(f"saved LoRA adapter -> {args.output_dir}")
 
