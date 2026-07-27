@@ -168,3 +168,104 @@ See [.env.example](.env.example) for grader configuration.
   rationales and watch for reward hacking.
 - **Harder/easier.** `tasks/addition.py --max-operand 999` reproduces the
   reference's easy setting; raise it for more headroom.
+
+## Add your own task — a worked example
+
+Nothing in the training/grader code is task-specific: a task is just a `tasks/*.py`
+that writes a jsonl of `RubricDatapoint`s, plus a config YAML. To show the full loop
+on something different from the shipped arithmetic/RAG tasks, we'll build
+**product-review sentiment classification with a grounded justification**: given a
+review, the policy must answer `POSITIVE` or `NEGATIVE` and justify in one line by
+quoting the review. It's a good example because it has two criteria (so it exercises
+the merged multi-rubric grader call) *and* a mechanical ground truth (the gold label),
+which is what lets you watch for reward hacking — here, a policy that writes a
+confident, grader-pleasing justification while quietly always guessing the majority
+label.
+
+**1. Model the datapoint as `(conversation, rubric_items, meta)`.** The conversation
+is the prompt the policy continues; the rubric items are what the grader scores; `meta`
+is ground truth shown to *neither* policy nor grader — it exists only so eval can check
+the model independently. Two rubrics, both on the default `<score>`/0–1 contract so
+they auto-merge into one grader call:
+
+```python
+# tasks/sentiment.py  (mirror the sys.path shim + save_jsonl pattern from the others)
+from data import Rubric, RubricDatapoint, save_jsonl
+
+SYSTEM = ("Classify the review sentiment. Reply on one line: the word POSITIVE or "
+          "NEGATIVE, then a short reason that quotes the review.")
+
+def make_datapoint(review: str, gold_label: str) -> RubricDatapoint:
+    return RubricDatapoint(
+        convo=[{"role": "system", "content": SYSTEM},
+               {"role": "user", "content": review}],
+        rubric_items=[
+            Rubric(rubric_str=("Award 1 if the stated sentiment label is correct for "
+                               "this review, else 0."),
+                   grader_output_format_instruction="Output <score>1</score> or <score>0</score>."),
+            Rubric(rubric_str=("Award 1 only if the justification quotes or paraphrases "
+                               "specific wording from the review (not a generic reason)."),
+                   grader_output_format_instruction="Output <score>1</score> or <score>0</score>."),
+        ],
+        meta={"gold_label": gold_label},   # ground truth — eval only, never shown
+    )
+```
+
+Note the first rubric is **reference-free**: the grader judges correctness from the
+review itself, and the gold label stays in `meta`. Build train/test jsonl from any
+labelled source (e.g. `datasets.load_dataset("stanfordnlp/sst2")`, mapping label
+1→POSITIVE / 0→NEGATIVE) exactly as `tasks/rag_groundedness.py` does, writing
+`example_data/sentiment_{train,test}.jsonl`.
+
+**2. Teach eval its ground truth** so the periodic capability watch works. Add one
+branch to `capability_score` in [eval.py](eval.py) for your `meta` shape:
+
+```python
+if isinstance(meta0.get("gold_label"), str):
+    hits = sum(dp.meta["gold_label"].lower() in a.lower() for dp, a in zip(dps, completions))
+    return hits / len(dps)
+```
+
+Without this the run still trains, but the `[eval] capability=…` line is skipped —
+and that line is the whole point on a task where the grader can be gamed.
+
+**3. Write `configs/sentiment.yaml`.** Keys map 1:1 to `train.py` flags. Give the
+completion enough room for a label + one-line reason, and point the grader at your
+endpoint:
+
+```yaml
+model: Qwen/Qwen2.5-1.5B-Instruct
+train_jsonl: example_data/sentiment_train.jsonl
+test_jsonl:  example_data/sentiment_test.jsonl   # used by eval + the periodic capability check
+output_dir:  outputs/sentiment-grpo
+num_generations: 8
+per_device_batch: 16
+grad_accum: 4
+max_completion_length: 64            # label + a one-line quote
+mask_truncated_completions: true     # don't let the length cap masquerade as reward
+loss_type: dr_grpo
+scale_rewards: none
+beta: 0.0
+max_steps: 200
+eval_steps: 20                       # watch capability vs reward
+grader:
+  model: Qwen/Qwen3-4B-Instruct-2507
+  enable_thinking: false
+```
+
+**4. Run the loop.** Same three commands as the shipped tasks:
+
+```bash
+python tasks/sentiment.py                                   # -> example_data/sentiment_{train,test}.jsonl
+python eval.py --config configs/sentiment.yaml              # baseline label accuracy + grader score
+python train.py --config configs/sentiment.yaml             # train; watch [grader] reward vs [eval] capability
+python eval.py --config configs/sentiment.yaml --adapter outputs/sentiment-grpo
+```
+
+**What to watch.** If the `[grader]` reward climbs while `[eval] capability` (label
+accuracy) stays flat or falls, the policy is gaming the justification rubric rather
+than classifying better — exactly the failure this recipe is built to surface. The fix
+is on the *rubric* side (tighten the correctness criterion, add a criterion that
+penalises hedging), not the RL side. That is the whole workflow: the grader turns
+"is this good?" into "are these the right criteria?", and the independent capability
+metric keeps that honest.
