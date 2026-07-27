@@ -1,9 +1,14 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "rubric-rlaif"
 version = "0.1.0"
 description = "Rubric-based RLAIF (Rubrics as Rewards) — single-A100 GRPO recipe"
 # Target host: runpod/pytorch:2.8.0-py3.11-cuda12.8.1-cudnn-devel-ubuntu22.04
-requires-python = ">=3.11,<3.12"
+# (3.11 is what that image ships; nothing in the code needs <3.12, so don't pin it out).
+requires-python = ">=3.11"
 # Core needs: build data + talk to an OpenAI-compatible grader. Kept light so
 # `generate_data.py` / the grader run anywhere. The heavy RL/GPU stack is in
 # the `train` extra.
@@ -22,8 +27,16 @@ dependencies = [
 #     uv pip install --system torch==2.8.0 --index https://download.pytorch.org/whl/cu128
 # vLLM is also excluded here — TRL trains fine with plain transformers generation.
 train = [
-    "trl>=0.15",
-    "transformers>=4.51",
+    # Floors track what the code actually CALLS, not just "something that imports":
+    #  - trl>=1.9: train.py uses vllm_mode="colocate" (added in 0.17) AND assumes
+    #    the 1.9 GRPOConfig shape (max_prompt_length already dropped — see the
+    #    field-drift handling in train.py). An older TRL installs and imports but
+    #    runs against a different API underneath, defeating that handling.
+    #  - transformers>=4.56: eval.py passes dtype=torch.bfloat16. Before the
+    #    torch_dtype->dtype rename (4.56) the kwarg is silently swallowed into the
+    #    model config and the model loads in fp32 — no error, just slow/incomparable eval.
+    "trl>=1.9",
+    "transformers>=4.56",
     "peft>=0.14",
     "accelerate>=1.2",
 ]
@@ -32,3 +45,11 @@ train = [
 # skip it if the grader is remote and you're fine with slower HF generation
 # (run train.py with --no-use-vllm in that case). vllm>=0.10.1 supports torch 2.8.
 vllm = ["vllm>=0.10.1"]
+
+# Flat layout: the recipe is a handful of top-level modules living next to this
+# file, not a nested package. Declare them explicitly — setuptools' auto-discovery
+# refuses a flat layout with multiple top-level modules, so without this the wheel
+# would ship no importable code and `pip install -e .` would be a silent no-op.
+# (`tasks/` stays out on purpose: those are runnable scripts, not an import target.)
+[tool.setuptools]
+py-modules = ["data", "grader", "reward", "train", "eval"]

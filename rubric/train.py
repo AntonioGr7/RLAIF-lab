@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 
 import yaml
 from datasets import Dataset
@@ -63,9 +64,18 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--learning-rate", type=float, default=1e-5)
     ap.add_argument("--beta", type=float, default=0.0, help="KL coef (0 = off, as in ref)")
     ap.add_argument("--temperature", type=float, default=1.0)
+    ap.add_argument("--seed", type=int, default=42, help="RNG seed: weight init, data shuffle, sampling")
     ap.add_argument("--max-prompt-length", type=int, default=256)
     ap.add_argument("--max-completion-length", type=int, default=32)
     ap.add_argument("--max-steps", type=int, default=120)
+    ap.add_argument(
+        "--gradient-checkpointing",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="recompute activations in the backward pass to save VRAM. Default on "
+        "(safe for big models / long completions); turn OFF for roughly a third "
+        "more throughput when VRAM is plentiful (e.g. a small LoRA on a free A100).",
+    )
     # LoRA
     ap.add_argument("--lora-rank", type=int, default=32)
     ap.add_argument("--lora-alpha", type=int, default=64)
@@ -114,7 +124,12 @@ def main() -> None:
         grader_overrides = cfg.pop("grader", {}) or {}  # handled separately below
 
     ap = build_parser()
-    known = {a.dest for a in ap._actions}
+    # All argument dests, via the public API (parse an empty argv) rather than the
+    # private ap._actions. Every arg has a default, so this never errors.
+    known = set(vars(ap.parse_known_args([])[0]))
+    # `test_jsonl` is an eval-only key in the shared config (eval.py reads it);
+    # train doesn't use a test set, but must tolerate the key rather than reject it.
+    known.add("test_jsonl")
     unknown = set(cfg) - known
     if unknown:
         raise SystemExit(
@@ -174,6 +189,25 @@ def main() -> None:
             )
         setattr(grader_cfg, k, v)
 
+    # Reproducibility: dump the *effective* run config next to the adapter, so a
+    # directory in outputs/ is self-describing — which grader, which hyperparameters,
+    # which library versions produced this adapter. Without it, an adapter is an
+    # orphan you can't re-derive. api_key is redacted (it may be a real hosted key).
+    import transformers
+
+    os.makedirs(args.output_dir, exist_ok=True)
+    manifest = {
+        "args": vars(args),
+        "grader": {
+            k: ("<redacted>" if k == "api_key" else v)
+            for k, v in vars(grader_cfg).items()
+        },
+        "versions": {"trl": trl.__version__, "transformers": transformers.__version__},
+    }
+    with open(os.path.join(args.output_dir, "run_config.json"), "w") as f:
+        json.dump(manifest, f, indent=2, default=str)
+    print(f"[train] wrote run manifest -> {args.output_dir}/run_config.json")
+
     train_ds = build_dataset(args.train_jsonl)
     reward_fn = make_rubric_reward(grader_cfg)
 
@@ -183,6 +217,7 @@ def main() -> None:
         num_generations=args.num_generations,
         temperature=args.temperature,
         max_completion_length=args.max_completion_length,
+        seed=args.seed,
         # optimization
         per_device_train_batch_size=args.per_device_batch,
         gradient_accumulation_steps=args.grad_accum,
@@ -190,7 +225,7 @@ def main() -> None:
         beta=args.beta,
         max_steps=args.max_steps,
         bf16=True,
-        gradient_checkpointing=True,
+        gradient_checkpointing=args.gradient_checkpointing,
         use_vllm=args.use_vllm,
         # logging
         logging_steps=args.logging_steps,
@@ -223,8 +258,6 @@ def main() -> None:
     grpo_kwargs = {k: v for k, v in grpo_kwargs.items() if k in valid}
     grpo_config = GRPOConfig(**grpo_kwargs)
     if args.wandb_project:
-        import os
-
         os.environ.setdefault("WANDB_PROJECT", args.wandb_project)
 
     lora_config = LoraConfig(

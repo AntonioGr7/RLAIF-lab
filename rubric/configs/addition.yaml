@@ -6,6 +6,7 @@
 # Model / data
 model: Qwen/Qwen2.5-1.5B-Instruct
 train_jsonl: example_data/addition_train.jsonl
+test_jsonl: example_data/addition_test.jsonl   # used by eval.py --config
 output_dir: outputs/addition-grpo
 
 # GRPO core
@@ -18,6 +19,7 @@ temperature: 1.0
 max_prompt_length: 256
 max_completion_length: 32   # answers are a single integer
 max_steps: 120
+gradient_checkpointing: false   # 1.5B LoRA fits easily on a free A100 — off is faster
 
 # LoRA
 lora_rank: 32

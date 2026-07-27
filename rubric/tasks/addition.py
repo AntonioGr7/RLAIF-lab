@@ -51,6 +51,9 @@ def make_one(rng: random.Random, max_operand: int) -> RubricDatapoint:
                 ),
             )
         ],
+        # gold lets eval.py run an independent exact-match check (grader vs truth),
+        # not shown to the policy/grader. Kept consistent with multiplication.py.
+        meta={"a": a, "b": b, "gold": a + b},
     )
 
 

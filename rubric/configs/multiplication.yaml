@@ -10,6 +10,7 @@
 # Model / data
 model: Qwen/Qwen2.5-1.5B-Instruct
 train_jsonl: example_data/multiplication_train.jsonl
+test_jsonl: example_data/multiplication_test.jsonl   # used by eval.py --config
 output_dir: outputs/multiplication-grpo
 
 # GRPO core
@@ -21,6 +22,7 @@ beta: 0.0
 temperature: 1.0              # keep >0 so samples in a group differ
 max_completion_length: 16     # a product is a short integer
 max_steps: 200
+gradient_checkpointing: false   # 1.5B LoRA fits easily on a free A100 — off is faster
 
 # LoRA
 lora_rank: 32

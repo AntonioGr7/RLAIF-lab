@@ -216,3 +216,8 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# RLAIF-lab: generated datasets and training outputs — never commit these
+# (task jsonl can be thousands of lines; outputs/ holds LoRA adapters + checkpoints)
+example_data/
+outputs/

@@ -14,6 +14,7 @@
 # room; it follows the grounding instruction better).
 model: Qwen/Qwen2.5-1.5B-Instruct
 train_jsonl: example_data/rag_groundedness_train.jsonl
+test_jsonl: example_data/rag_groundedness_test.jsonl   # used by eval.py --config
 output_dir: outputs/rag-groundedness-grpo
 
 # GRPO core
@@ -25,6 +26,7 @@ beta: 0.02                     # KL leash ON — groundedness rewards are gameab
 temperature: 1.0
 max_completion_length: 200     # room for a real answer or an abstention
 max_steps: 200
+gradient_checkpointing: true    # longer seqs (passage + 200-tok answers); on by default, try false if VRAM allows
 # NOTE: no max_prompt_length — TRL 1.9 dropped it. SQuAD passages (~150-250 tok)
 # fit Qwen2.5's context, so no truncation control is needed here.
 

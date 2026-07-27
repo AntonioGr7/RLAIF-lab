@@ -82,7 +82,12 @@ python tasks/addition.py                 # -> example_data/addition_{train,test}
 # 2) grader endpoint — run `vllm serve` where the grader model lives (this box,
 #    another GPU, or another machine) and point the trainer at it. `vllm serve`
 #    is a standalone tool; it does NOT require the `vllm` extra in this project.
-vllm serve Qwen/Qwen3-4B-Instruct-2507 --port 8001 &
+#    IMPORTANT (single-GPU): `vllm serve` defaults to --gpu-memory-utilization 0.9,
+#    which leaves no room for the colocated policy vLLM (vllm_gpu_mem: 0.3 in the
+#    configs) — you'll OOM. Cap the grader so both fit: 0.35 + 0.30 leaves ~0.35
+#    for the trainer itself. If the grader runs on a SEPARATE GPU/host, drop the
+#    flag and let it use the default 0.9.
+vllm serve Qwen/Qwen3-4B-Instruct-2507 --port 8001 --gpu-memory-utilization 0.35 &
 export GRADER_BASE_URL=http://localhost:8001/v1     # or http://<other-host>:8001/v1
 export GRADER_MODEL=Qwen/Qwen3-4B-Instruct-2507
 export GRADER_API_KEY=EMPTY
@@ -130,6 +135,18 @@ See [.env.example](.env.example) for grader configuration.
 - **Single-GPU memory.** Colocated vLLM is capped at `--vllm-gpu-mem 0.3` of VRAM;
   the rest is LoRA training. Since the grader is remote, the whole GPU is free for
   the policy — bump the fraction for a bigger generation batch, or drop it on OOM.
+- **Grader latency = GPU idle.** The step is `generate → grade → update`, and the
+  policy update needs the batch's rewards, so the grader sits on the critical path:
+  while it runs, the training GPU is idle. TRL's reward interface is synchronous, so
+  hiding that latency behind the *next* batch's generation would require a custom
+  training loop — deliberately out of scope here. Instead the recipe shrinks the
+  idle window: the grader dedups identical completions (big win on short arithmetic
+  groups) and holds one persistent HTTP connection pool across steps (no per-step
+  TCP/TLS handshakes). To shrink it further, keep the grader **local/colocated**
+  rather than a remote 35B, set `GRADER_ENABLE_THINKING=false` for a short verdict,
+  and raise `GRADER_MAX_CONCURRENCY` until the grader server saturates. The
+  per-step `[grader]` log line reports call count and dedup savings so you can see
+  the window.
 - **Group size.** `--num-generations G` is the GRPO group. `per_device_batch *
   grad_accum` must be divisible by `G` (the script checks and explains if not).
 - **KL.** `--beta 0.0` matches the reference (no KL penalty). Raise it (e.g. `0.02`)

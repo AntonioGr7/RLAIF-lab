@@ -10,6 +10,7 @@
 
 model: Qwen/Qwen2.5-7B-Instruct        # a stronger policy for open-ended tasks
 train_jsonl: example_data/my_task_train.jsonl
+test_jsonl: example_data/my_task_test.jsonl   # used by eval.py --config
 output_dir: outputs/my-task-grpo
 
 num_generations: 8
@@ -26,6 +27,7 @@ temperature: 1.0
 max_prompt_length: 1024                 # real prompts are longer than "a + b"
 max_completion_length: 512              # allow real answers; watch length inflation
 max_steps: 500
+gradient_checkpointing: true    # 7B + long completions — keep on to avoid OOM
 
 lora_rank: 32
 lora_alpha: 64
